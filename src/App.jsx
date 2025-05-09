@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { Device } from 'mediasoup-client';
 
-const socket = io('https://obscure-spoon-4jv59pjxxp64cq9v4-3000.app.github.dev/');
+const socket = io('https://hcmbackend-cka0.onrender.com');
 
 function App() {
   const [roomId, setRoomId] = useState('');
