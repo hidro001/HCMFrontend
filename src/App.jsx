@@ -75,6 +75,7 @@ function App() {
 
       <h2>Current Room ID: {joinedRoom || 'None'}</h2>
       <video ref={videoRef} autoPlay muted playsInline style={{ width: '500px', border: '1px solid black' }} />
+      <div className="id">ID</div>
     </div>
   );
 }
