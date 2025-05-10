@@ -40,6 +40,7 @@ function App() {
   const handleCreateRoom = () => {
     const newRoomId = Math.random().toString(36).substring(2, 8);
     setRoomId(newRoomId);
+    setInputRoomId(newRoomId);
     joinRoom(newRoomId);
   };
 
