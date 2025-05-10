@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { Device } from 'mediasoup-client';
 
-const socket = io('https://demov2.humanmaximizer.com/', {
+const socket = io('wss://demov2.humanmaximizer.com', {
   transports: ['websocket'],
 });
 
@@ -56,7 +56,7 @@ function App() {
       await device.load({ routerRtpCapabilities });
       deviceRef.current = device;
 
-      // Send transport
+      // Create send transport
       socket.emit('createSendTransport', {}, async (sendTransportOptions) => {
         const sendTransport = device.createSendTransport(sendTransportOptions);
         sendTransportRef.current = sendTransport;
@@ -71,16 +71,18 @@ function App() {
           });
         });
 
+        // Acquire local media stream
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
 
+        // Produce local tracks
         for (const track of stream.getTracks()) {
           await sendTransport.produce({ track });
         }
 
-        // Receive transport
+        // Create receive transport
         socket.emit('createRecvTransport', {}, async (recvOptions) => {
           const recvTransport = device.createRecvTransport(recvOptions);
           recvTransportRef.current = recvTransport;
@@ -89,7 +91,7 @@ function App() {
             socket.emit('connectTransport', { transportType: 'recv', dtlsParameters }, callback);
           });
 
-          // Consume all existing producers
+          // Consume existing producers
           for (const producer of existingProducers) {
             consumeTrack(producer.producerId, producer.kind);
           }
