@@ -1,233 +1,187 @@
-import React, { useState, useRef, useEffect } from 'react';
+// App.jsx
+import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { Device } from 'mediasoup-client';
+import * as mediasoupClient from 'mediasoup-client';
 
-const socket = io('wss://demov2.humanmaximizer.com', {
-  transports: ['websocket'],
-});
+const socket = io('http://localhost:3000', { transports: ['websocket'] });
 
-const VideoPlayer = ({ stream }) => {
-  const videoRef = useRef(null);
-
+// A little component that attaches a MediaStream to a <video>
+function VideoPlayer({ stream }) {
+  const ref = useRef(null);
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    if (ref.current && stream) {
+      console.log('⏩ Attaching remote stream', stream.id);
+      ref.current.srcObject = stream;
     }
   }, [stream]);
-
   return (
     <video
-      ref={videoRef}
+      ref={ref}
       autoPlay
       playsInline
-      muted={false}
-      style={{ width: 300, margin: 10, border: '1px solid black' }}
+      style={{ width: 300, margin: 10, border: '1px solid #ccc' }}
     />
-  );
-};
-
-function App() {
-  const [roomId, setRoomId] = useState('');
-  const [joinedRoom, setJoinedRoom] = useState(null);
-  const [inputRoomId, setInputRoomId] = useState('');
-  const [remoteStreams, setRemoteStreams] = useState([]);
-
-  const localVideoRef = useRef(null);
-  const deviceRef = useRef(null);
-  const sendTransportRef = useRef(null);
-  const recvTransportRef = useRef(null);
-
-  const handleCreateRoom = () => {
-    const newRoomId = Math.random().toString(36).substring(2, 8);
-    setRoomId(newRoomId);
-    setInputRoomId(newRoomId);
-    joinRoom(newRoomId);
-  };
-
-  const handleJoinRoom = () => {
-    if (!inputRoomId.trim()) return;
-    setRoomId(inputRoomId.trim());
-    joinRoom(inputRoomId.trim());
-  };
-
-  const joinRoom = async (roomIdToJoin) => {
-    socket.emit(
-      'joinRoom',
-      { roomId: roomIdToJoin },
-      async (routerRtpCapabilities, existingProducers) => {
-        const device = new Device();
-        await device.load({ routerRtpCapabilities });
-        deviceRef.current = device;
-
-        // --- Create Send Transport ---
-        socket.emit('createSendTransport', {}, async (sendOpts) => {
-          const sendTransport = device.createSendTransport(sendOpts);
-          sendTransportRef.current = sendTransport;
-
-          sendTransport.on('connect', ({ dtlsParameters }, cb) => {
-            socket.emit('connectTransport', { transportType: 'send', dtlsParameters }, cb);
-          });
-
-          sendTransport.on('produce', ({ kind, rtpParameters }, cb) => {
-            socket.emit('produce', { kind, rtpParameters }, ({ id }) => {
-              cb({ id });
-            });
-          });
-
-          // Grab local media
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true,
-          });
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = stream;
-          }
-
-          // Produce each track
-          for (const track of stream.getTracks()) {
-            await sendTransport.produce({ track });
-          }
-
-          // --- Create Recv Transport ---
-          socket.emit('createRecvTransport', {}, async (recvOpts) => {
-            const recvTransport = device.createRecvTransport(recvOpts);
-            recvTransportRef.current = recvTransport;
-
-            recvTransport.on('connect', ({ dtlsParameters }, cb) => {
-              socket.emit(
-                'connectTransport',
-                { transportType: 'recv', dtlsParameters },
-                cb
-              );
-            });
-
-            // Consume any existing producers
-            for (const p of existingProducers) {
-              consumeTrack(p.producerId, p.kind);
-            }
-
-            setJoinedRoom(roomIdToJoin);
-          });
-        });
-      }
-    );
-  };
-
-  const consumeTrack = async (producerId, kind) => {
-    const device = deviceRef.current;
-    const recvTransport = recvTransportRef.current;
-    if (!device || !recvTransport) return;
-
-    socket.emit(
-      'consume',
-      { producerId, rtpCapabilities: device.rtpCapabilities },
-      async (data) => {
-        const consumer = await recvTransport.consume({
-          id: data.id,
-          producerId: data.producerId,
-          kind: data.kind,
-          rtpParameters: data.rtpParameters,
-        });
-
-        const stream = new MediaStream([consumer.track]);
-        setRemoteStreams((prev) => [...prev, { id: data.producerId, stream }]);
-      }
-    );
-  };
-
-  useEffect(() => {
-    const onNewProducer = ({ producerId, kind }) => {
-      consumeTrack(producerId, kind);
-    };
-    socket.on('newProducer', onNewProducer);
-    return () => {
-      socket.off('newProducer', onNewProducer);
-    };
-  }, []);
-
-  // --- New End Call handler ---
-  const handleEndCall = () => {
-    // 1. Close Mediasoup transports
-    if (sendTransportRef.current) {
-      sendTransportRef.current.close();
-      sendTransportRef.current = null;
-    }
-    if (recvTransportRef.current) {
-      recvTransportRef.current.close();
-      recvTransportRef.current = null;
-    }
-
-    // 2. Stop local media
-    if (localVideoRef.current?.srcObject) {
-      localVideoRef.current.srcObject.getTracks().forEach((t) => t.stop());
-      localVideoRef.current.srcObject = null;
-    }
-
-    // 3. Disconnect socket
-    socket.off();
-    socket.disconnect();
-
-    // 4. Reset state
-    setJoinedRoom(null);
-    setRoomId('');
-    setInputRoomId('');
-    setRemoteStreams([]);
-  };
-
-  return (
-    <div style={{ padding: '2rem' }}>
-      <h1>Mediasoup Group Call</h1>
-
-      {/* End Call */}
-      {joinedRoom && (
-        <button
-          onClick={handleEndCall}
-          style={{
-            background: '#e53e3e',
-            color: 'white',
-            border: 'none',
-            padding: '0.5rem 1rem',
-            borderRadius: '0.25rem',
-            cursor: 'pointer',
-            marginBottom: '1rem',
-          }}
-        >
-          End Call
-        </button>
-      )}
-
-      <button onClick={handleCreateRoom}>Create Room</button>
-      <div style={{ marginTop: '1rem' }}>
-        <input
-          type="text"
-          placeholder="Enter Room ID"
-          value={inputRoomId}
-          onChange={(e) => setInputRoomId(e.target.value)}
-        />
-        <button onClick={handleJoinRoom}>Join Room</button>
-      </div>
-
-      <h2>Current Room ID: {joinedRoom || 'None'}</h2>
-
-      <div style={{ marginTop: '2rem' }}>
-        <h3>Local Stream</h3>
-        <video
-          ref={localVideoRef}
-          autoPlay
-          muted
-          playsInline
-          style={{ width: 300, margin: 10, border: '1px solid black' }}
-        />
-      </div>
-
-      <div style={{ marginTop: '2rem' }}>
-        <h3>Remote Participants</h3>
-        {remoteStreams.map(({ id, stream }) => (
-          <VideoPlayer key={id} stream={stream} />
-        ))}
-      </div>
-    </div>
   );
 }
 
-export default App;
+export default function App() {
+  const localRef = useRef(null);
+  const [device, setDevice] = useState(null);
+  const [recvTransport, setRecvTransport] = useState(null);
+  const [remoteStreams, setRemoteStreams] = useState([]);
+  const roomId = 'test-room';
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      // 1) Join the room, get router RTP caps + existing producers
+      const [caps, existing] = await new Promise((res) =>
+        socket.emit('joinRoom', { roomId }, (c, e) => res([c, e]))
+      );
+      console.log('🔗 joined, caps=', caps, 'existing=', existing);
+
+      // 2) Load the Mediasoup Device
+      const dev = new mediasoupClient.Device();
+      await dev.load({ routerRtpCapabilities: caps });
+      if (!mounted) return;
+      setDevice(dev);
+
+      // 3) Create & publish via sendTransport
+      await createSendTransport(dev);
+
+      // 4) Create recvTransport
+      const recv = await createRecvTransport(dev);
+      if (!mounted) return;
+      setRecvTransport(recv);
+
+      // 5) Consume all existing video producers
+      for (const { producerId, kind, socketId } of existing) {
+        if (kind === 'video') {
+          console.log('▶️ consume existing', producerId);
+          await consumeVideo(producerId, socketId, dev, recv);
+        }
+      }
+
+      // 6) Listen for new producers
+      socket.on('newProducer', ({ producerId, kind, socketId }) => {
+        if (kind === 'video') {
+          console.log('🔔 newProducer', producerId);
+          consumeVideo(producerId, socketId, dev, recv);
+        }
+      });
+    })();
+
+    return () => {
+      mounted = false;
+      socket.emit('leaveRoom');
+      socket.off('newProducer');
+    };
+  }, []);
+
+  // -- Helper to create sendTransport and publish local camera
+  function createSendTransport(dev) {
+    return new Promise((resolve) => {
+      socket.emit('createSendTransport', {}, async (params) => {
+        console.log('📤 sendTransport params', params);
+        const tr = dev.createSendTransport(params);
+        tr.on('connect', ({ dtlsParameters }, cb) => {
+          console.log('sendTransport connect');
+          socket.emit('connectTransport', { transportType: 'send', dtlsParameters }, cb);
+        });
+        tr.on('produce', ({ kind, rtpParameters }, cb) => {
+          console.log('sendTransport produce', kind);
+          socket.emit('produce', { kind, rtpParameters }, ({ id }) => cb({ id }));
+        });
+
+        // publish local stream
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        console.log('🎥 got local stream', stream.id);
+        if (localRef.current) localRef.current.srcObject = stream;
+        for (const track of stream.getTracks()) {
+          await tr.produce({ track });
+        }
+        resolve(tr);
+      });
+    });
+  }
+
+  // -- Helper to create recvTransport
+  function createRecvTransport(dev) {
+    return new Promise((resolve) => {
+      socket.emit('createRecvTransport', {}, (params) => {
+        console.log('📥 recvTransport params', params);
+        const tr = dev.createRecvTransport(params);
+        tr.on('connect', ({ dtlsParameters }, cb) => {
+          console.log('recvTransport connect');
+          socket.emit('connectTransport', { transportType: 'recv', dtlsParameters }, cb);
+        });
+        resolve(tr);
+      });
+    });
+  }
+
+  // -- Helper to consume a single video producer
+  async function consumeVideo(producerId, socketId, dev, transport) {
+    console.log('➡️ requesting consume for', producerId);
+    socket.emit(
+      'consume',
+      { producerId, rtpCapabilities: dev.rtpCapabilities },
+      async (params) => {
+        console.log('⬅️ consume callback params', params);
+        try {
+          const consumer = await transport.consume({
+            id: params.id,
+            producerId: params.producerId,
+            kind: 'video',
+            rtpParameters: params.rtpParameters,
+          });
+          console.log('✅ consumer created', consumer.id);
+
+          // resume the consumer to start RTP
+          await consumer.resume();
+          console.log('▶️ consumer resumed');
+
+          const stream = new MediaStream([consumer.track]);
+          setRemoteStreams((all) => {
+            // either add to existing or push new
+            const idx = all.findIndex((s) => s.socketId === socketId);
+            if (idx >= 0) {
+              all[idx].stream.addTrack(consumer.track);
+              return [...all];
+            }
+            return [...all, { socketId, stream }];
+          });
+        } catch (err) {
+          console.error('❌ transport.consume failed', err);
+        }
+      }
+    );
+  }
+
+  return (
+    <div style={{ padding: '1rem' }}>
+      <h1>SFU Video Call</h1>
+      <section>
+        <h2>Local Stream</h2>
+        <video
+          ref={localRef}
+          autoPlay
+          muted
+          playsInline
+          style={{ width: 300, border: '1px solid #ccc' }}
+        />
+      </section>
+      <section>
+        <h2>Remote Streams</h2>
+        {remoteStreams.length === 0 ? (
+          <p>No remote video yet.</p>
+        ) : (
+          remoteStreams.map(({ socketId, stream }) => (
+            <VideoPlayer key={socketId} stream={stream} />
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
