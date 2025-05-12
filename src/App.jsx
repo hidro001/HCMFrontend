@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import * as mediasoupClient from 'mediasoup-client';
 
-const socket = io('https://demov2.humanmaximizer.com/', { transports: ['websocket'] });
+const socket = io('wss://demov2.humanmaximizer.com/', { transports: ['websocket'] });
 
 // A little component that attaches a MediaStream to a <video>
 function VideoPlayer({ stream }) {
